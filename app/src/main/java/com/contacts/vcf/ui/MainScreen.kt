@@ -1,7 +1,11 @@
 package com.contacts.vcf.ui
 
+import android.app.Activity
 import android.content.ContentResolver
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,7 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -34,19 +37,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.contacts.vcf.BuildConfig
 import com.contacts.vcf.R
 import com.contacts.vcf.data.Contact
 import com.contacts.vcf.data.ContactGroup
 import com.contacts.vcf.data.SettingsManager
+import com.contacts.vcf.utils.UpdateInfo
 import com.google.accompanist.pager.HorizontalPagerIndicator
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
+    onNavigateToSettings: () -> Unit,
     onContactClick: (groupId: String, contactId: String) -> Unit
 ) {
     val contactGroups by viewModel.filteredContactGroups.collectAsState()
@@ -61,6 +68,24 @@ fun MainScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     var contactToEdit by remember { mutableStateOf<Pair<String, Contact>?>(null) }
     var showAboutDialog by remember { mutableStateOf(false) }
+
+    val updateInfo by viewModel.updateInfo.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.checkForUpdates()
+    }
+
+    updateInfo?.let { release ->
+        val latestVersion = release.latestVersion
+        val currentVersion = BuildConfig.VERSION_NAME
+
+        if (isNewerVersion(latestVersion, currentVersion)) {
+            UpdateAvailableDialog(
+                release = release,
+                onDismiss = { viewModel.clearUpdateInfo() }
+            )
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -80,7 +105,7 @@ fun MainScreen(
             AppSearchBar(
                 query = searchQuery,
                 onQueryChange = { viewModel.onSearchQueryChange(it) },
-                viewModel = viewModel,
+                onNavigateToSettings = onNavigateToSettings,
                 onAboutClick = { showAboutDialog = true }
             )
         },
@@ -108,44 +133,36 @@ fun MainScreen(
                         Box {
                             Tab(
                                 selected = pagerState.currentPage == index,
-                                onClick = {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                                },
+                                onClick = {},
                                 text = {
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(horizontal = 8.dp)
-                                            .pointerInput(group.id) {
-                                                detectTapGestures(
-                                                    onLongPress = {
-                                                        showMenuForGroup = group
-                                                        menuExpanded = true
-                                                    }
-                                                )
-                                            }
-                                    ) {
-                                        Text(group.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        group.name,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {
+                                        coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                                    },
+                                    onLongClick = {
+                                        showMenuForGroup = group
+                                        menuExpanded = true
                                     }
-                                }
+                                )
                             )
                             DropdownMenu(
                                 expanded = menuExpanded && showMenuForGroup?.id == group.id,
                                 onDismissRequest = { menuExpanded = false }
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text("Rename") },
-                                    onClick = {
-                                        showRenameDialog = showMenuForGroup
-                                        menuExpanded = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete") },
-                                    onClick = {
-                                        showDeleteDialog = showMenuForGroup
-                                        menuExpanded = false
-                                    }
-                                )
+                                DropdownMenuItem(text = { Text("Rename") }, onClick = {
+                                    showRenameDialog = showMenuForGroup
+                                    menuExpanded = false
+                                })
+                                DropdownMenuItem(text = { Text("Delete") }, onClick = {
+                                    showDeleteDialog = showMenuForGroup
+                                    menuExpanded = false
+                                })
                             }
                         }
                     }
@@ -180,7 +197,14 @@ fun MainScreen(
     }
 
     if (showAboutDialog) {
-        AboutAppDialog(onDismiss = { showAboutDialog = false })
+        AboutAppDialog(
+            onDismiss = { showAboutDialog = false },
+            onCheckForUpdate = {
+                showAboutDialog = false
+                Toast.makeText(context, "Checking for updates...", Toast.LENGTH_SHORT).show()
+                viewModel.checkForUpdates()
+            }
+        )
     }
 
     showRenameDialog?.let { group ->
@@ -231,11 +255,9 @@ fun MainScreen(
 fun AppSearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
-    viewModel: MainViewModel,
+    onNavigateToSettings: () -> Unit,
     onAboutClick: () -> Unit
 ) {
-    val themeState by viewModel.themeState.collectAsState()
-
     SearchBar(
         modifier = Modifier
             .fillMaxWidth()
@@ -249,17 +271,9 @@ fun AppSearchBar(
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
         trailingIcon = {
             Row {
-                var showThemeMenu by remember { mutableStateOf(false) }
-                IconButton(onClick = { showThemeMenu = true }) {
-                    Icon(Icons.Outlined.ColorLens, contentDescription = "Change Theme")
+                IconButton(onClick = onNavigateToSettings) {
+                    Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                 }
-                ThemeDropdownMenu(
-                    expanded = showThemeMenu,
-                    onDismiss = { showThemeMenu = false },
-                    currentTheme = themeState,
-                    onThemeSelect = { viewModel.setTheme(it) }
-                )
-
                 var showOptionsMenu by remember { mutableStateOf(false) }
                 IconButton(onClick = { showOptionsMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "More Options")
@@ -282,36 +296,7 @@ fun AppSearchBar(
 }
 
 @Composable
-fun ThemeDropdownMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    currentTheme: Int,
-    onThemeSelect: (Int) -> Unit
-) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(
-            text = { Text("System Default") },
-            onClick = { onThemeSelect(SettingsManager.THEME_SYSTEM); onDismiss() },
-            leadingIcon = { Icon(Icons.Outlined.BrightnessAuto, contentDescription = null) },
-            trailingIcon = { if (currentTheme == SettingsManager.THEME_SYSTEM) Icon(Icons.Default.Check, contentDescription = "Selected") }
-        )
-        DropdownMenuItem(
-            text = { Text("Light") },
-            onClick = { onThemeSelect(SettingsManager.THEME_LIGHT); onDismiss() },
-            leadingIcon = { Icon(Icons.Outlined.WbSunny, contentDescription = null) },
-            trailingIcon = { if (currentTheme == SettingsManager.THEME_LIGHT) Icon(Icons.Default.Check, contentDescription = "Selected") }
-        )
-        DropdownMenuItem(
-            text = { Text("Dark") },
-            onClick = { onThemeSelect(SettingsManager.THEME_DARK); onDismiss() },
-            leadingIcon = { Icon(Icons.Outlined.ModeNight, contentDescription = null) },
-            trailingIcon = { if (currentTheme == SettingsManager.THEME_DARK) Icon(Icons.Default.Check, contentDescription = "Selected") }
-        )
-    }
-}
-
-@Composable
-fun AboutAppDialog(onDismiss: () -> Unit) {
+fun AboutAppDialog(onDismiss: () -> Unit, onCheckForUpdate: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Outlined.Info, contentDescription = null) },
@@ -330,6 +315,11 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
         confirmButton = {
             Button(onClick = onDismiss) {
                 Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCheckForUpdate) {
+                Text("Check for Update")
             }
         }
     )
@@ -498,7 +488,6 @@ fun EditContactDialog(
     )
 }
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RenameGroupDialog(group: ContactGroup, onDismiss: () -> Unit, onRename: (String) -> Unit) {
@@ -516,6 +505,81 @@ fun RenameGroupDialog(group: ContactGroup, onDismiss: () -> Unit, onRename: (Str
             Button(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+fun UpdateAvailableDialog(release: UpdateInfo, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update Available: v${release.latestVersion}") },
+        text = {
+            Column {
+                Text("A new version of the app is available. Please update to the latest version.")
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("What's new:\n${release.releaseNotes}")
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                downloadAndInstallApk(context, release.apkUrl)
+                onDismiss()
+            }) {
+                Text("Update Now")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Later")
+            }
+        }
+    )
+}
+
+private fun downloadAndInstallApk(context: Context, url: String) {
+    Toast.makeText(context, "Starting download...", Toast.LENGTH_SHORT).show()
+    Thread {
+        try {
+            val inputStream = java.net.URL(url).openStream()
+            val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "update.apk")
+            file.outputStream().use { output ->
+                inputStream.copyTo(output)
+            }
+
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(installIntent)
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            (context as? Activity)?.runOnUiThread {
+                Toast.makeText(context, "Download failed.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }.start()
+}
+
+private fun isNewerVersion(latestVersion: String, currentVersion: String): Boolean {
+    try {
+        val latestParts = latestVersion.split('.').map { it.toInt() }
+        val currentParts = currentVersion.split('.').map { it.toInt() }
+        val commonLength = minOf(latestParts.size, currentParts.size)
+
+        for (i in 0 until commonLength) {
+            if (latestParts[i] > currentParts[i]) return true
+            if (latestParts[i] < currentParts[i]) return false
+        }
+
+        return latestParts.size > currentParts.size
+    } catch (e: NumberFormatException) {
+        e.printStackTrace()
+        return false
+    }
 }
 
 fun Uri.getFileName(contentResolver: ContentResolver): String? {

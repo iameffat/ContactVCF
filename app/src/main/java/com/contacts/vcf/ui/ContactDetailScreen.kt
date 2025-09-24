@@ -1,5 +1,6 @@
 package com.contacts.vcf.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -15,8 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,7 +100,7 @@ fun ContactDetailScreen(
                 }
 
                 items(contact.phoneNumbers) { phoneNumber ->
-                    PhoneNumberItem(phoneNumber = phoneNumber)
+                    PhoneNumberItem(phoneNumber = phoneNumber, viewModel = viewModel)
                 }
             }
         }
@@ -109,9 +109,26 @@ fun ContactDetailScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PhoneNumberItem(phoneNumber: String) {
+fun PhoneNumberItem(phoneNumber: String, viewModel: MainViewModel) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+
+    val defaultCountryCode by viewModel.countryCodeState.collectAsState()
+    val alwaysAsk by viewModel.alwaysAskState.collectAsState()
+
+    var showCountryCodeDialog by remember { mutableStateOf(false) }
+
+    if (showCountryCodeDialog) {
+        CountryCodeDialog(
+            defaultCode = defaultCountryCode,
+            onDismiss = { showCountryCodeDialog = false },
+            onConfirm = { countryCode ->
+                showCountryCodeDialog = false
+                val fullNumber = countryCode.filter { it.isDigit() } + phoneNumber.filter { it.isDigit() }.removePrefix("0")
+                openWhatsApp(context, fullNumber)
+            }
+        )
+    }
 
     Row(
         modifier = Modifier
@@ -144,26 +161,21 @@ fun PhoneNumberItem(phoneNumber: String) {
         }) {
             Icon(Icons.Default.Email, contentDescription = "SMS", tint = MaterialTheme.colorScheme.secondary)
         }
-        // হোয়াটসঅ্যাপ বাটনের onClick লজিকটি এখানে ঠিক করা হয়েছে
         IconButton(onClick = {
-            // এই onClick ব্লকের ভেতরে কোনো @Composable ফাংশন (যেমন Icon) নেই
-            val normalizedNumber = phoneNumber.filter { it.isDigit() }.let {
-                when {
-                    it.startsWith("880") -> it
-                    it.startsWith("0") -> "88$it"
-                    else -> "88$it"
+            val cleanedNumber = phoneNumber.filter { it.isDigit() }
+            val codeWithoutPlus = defaultCountryCode.filter { it.isDigit() }
+
+            if (cleanedNumber.startsWith(codeWithoutPlus)) {
+                openWhatsApp(context, cleanedNumber)
+            } else {
+                if (alwaysAsk) {
+                    showCountryCodeDialog = true
+                } else {
+                    val fullNumber = codeWithoutPlus + cleanedNumber.removePrefix("0")
+                    openWhatsApp(context, fullNumber)
                 }
-            }
-            try {
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    data = Uri.parse("https://api.whatsapp.com/send?phone=$normalizedNumber")
-                }
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                Toast.makeText(context, "WhatsApp not installed.", Toast.LENGTH_SHORT).show()
             }
         }) {
-            // Icon ফাংশনটি onClick ব্লকের বাইরে, এটি সঠিক জায়গায় আছে
             Icon(
                 painter = painterResource(id = R.drawable.ic_whatsapp),
                 contentDescription = "WhatsApp",
@@ -171,5 +183,48 @@ fun PhoneNumberItem(phoneNumber: String) {
                 modifier = Modifier.size(24.dp)
             )
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CountryCodeDialog(
+    defaultCode: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var countryCode by remember { mutableStateOf(defaultCode) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Country Code") },
+        text = {
+            OutlinedTextField(
+                value = countryCode,
+                onValueChange = { countryCode = it },
+                label = { Text("Country Code") },
+                placeholder = { Text("+88") }
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(countryCode) }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+fun openWhatsApp(context: Context, number: String) {
+    try {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("https://api.whatsapp.com/send?phone=$number")
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "WhatsApp not installed.", Toast.LENGTH_SHORT).show()
     }
 }

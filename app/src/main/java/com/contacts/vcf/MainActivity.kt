@@ -19,6 +19,7 @@ import com.contacts.vcf.ui.ContactDetailScreen
 import com.contacts.vcf.ui.MainScreen
 import com.contacts.vcf.ui.MainViewModel
 import com.contacts.vcf.ui.MainViewModelFactory
+import com.contacts.vcf.ui.SettingsScreen
 import com.contacts.vcf.ui.theme.ContactVCFTheme
 
 class MainActivity : ComponentActivity() {
@@ -49,9 +50,16 @@ class MainActivity : ComponentActivity() {
                         composable("main") {
                             MainScreen(
                                 viewModel = viewModel,
+                                onNavigateToSettings = { navController.navigate("settings") },
                                 onContactClick = { groupId, contactId ->
                                     navController.navigate("contactDetail/$groupId/$contactId")
                                 }
+                            )
+                        }
+                        composable("settings") {
+                            SettingsScreen(
+                                viewModel = viewModel,
+                                onNavigateBack = { navController.popBackStack() }
                             )
                         }
                         composable("contactDetail/{groupId}/{contactId}") { backStackEntry ->

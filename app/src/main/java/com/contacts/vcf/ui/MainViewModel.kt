@@ -6,11 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.contacts.vcf.data.Contact
-import com.contacts.vcf.data.ContactGroup
-import com.contacts.vcf.data.ContactRepository
-import com.contacts.vcf.data.SettingsManager
+import com.contacts.vcf.data.*
 import com.contacts.vcf.utils.FileParser
+import com.contacts.vcf.utils.UpdateChecker
+import com.contacts.vcf.utils.UpdateInfo
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -20,13 +19,22 @@ class MainViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository = ContactRepository(application)
-
     private val _contactGroups = MutableStateFlow<List<ContactGroup>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
+    private val _updateInfo = MutableStateFlow<UpdateInfo?>(null)
+    val updateInfo = _updateInfo.asStateFlow()
+
+    // Settings States
     val themeState: StateFlow<Int> = settingsManager.themePreference
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsManager.THEME_SYSTEM)
+
+    val countryCodeState: StateFlow<String> = settingsManager.countryCodePreference
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "+88")
+
+    val alwaysAskState: StateFlow<Boolean> = settingsManager.alwaysAskPreference
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val filteredContactGroups = _contactGroups.combine(_searchQuery) { groups, query ->
         if (query.isBlank()) {
@@ -58,6 +66,22 @@ class MainViewModel(
         viewModelScope.launch {
             settingsManager.saveThemePreference(themeOption)
         }
+    }
+
+    fun saveCountryCodeSettings(countryCode: String, alwaysAsk: Boolean) {
+        viewModelScope.launch {
+            settingsManager.saveCountryCodePreference(countryCode, alwaysAsk)
+        }
+    }
+
+    fun checkForUpdates() {
+        viewModelScope.launch {
+            _updateInfo.value = UpdateChecker.getUpdateInfo()
+        }
+    }
+
+    fun clearUpdateInfo() {
+        _updateInfo.value = null
     }
 
     private fun loadContactGroups() {
