@@ -136,6 +136,6 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ### 📬 **Contact**
 
-Your Name - [@your_twitter](https://twitter.com/iameffat) - @iameffat
+Your Name - [@iameffat](https://twitter.com/iameffat) - @iameffat
 
 Project Link: [https://github.com/iameffat/contactvcf](https://github.com/iameffat/contactvcf)
