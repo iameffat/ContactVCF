@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://github.com/iameffat/contactvcf/blob/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp?raw=true" alt="logo" width="100" height="100">
 
-  # Contact VCF
+  # Contacts VCF
 
   **A simple and intuitive Android application to manage your contacts from VCF files.**
 
